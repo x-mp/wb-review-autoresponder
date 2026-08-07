@@ -38,7 +38,11 @@ pytest -q
 ruff check .
 ```
 
-Подробная спецификация: [docs/SPEC.md](docs/SPEC.md). Актуальные правила жалоб: [docs/WB_RULES.md](docs/WB_RULES.md).
+Документация:
+
+- [практический playbook ответов на отзывы и вопросы](docs/RESPONSE_PLAYBOOK.md);
+- [архитектура и спецификация](docs/SPEC.md);
+- [актуальные правила WB и жалобы](docs/WB_RULES.md).
 
 ## Секреты и данные
 
