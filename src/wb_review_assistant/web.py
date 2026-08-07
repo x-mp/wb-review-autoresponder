@@ -8,13 +8,24 @@ import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
 
+import httpx
 import psycopg
 from fastapi import FastAPI, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
+from pydantic import BaseModel
 
 from .db import connect, init_db, log_access
-from .service import analyze_complaint, approve_draft, generate_draft, publish_draft
+from .service import (
+    analyze_complaint,
+    approve_draft,
+    generate_draft,
+    generate_unanswered_review_drafts,
+    get_runtime_options,
+    publish_draft,
+    sync_all,
+    update_runtime_options,
+)
 from .settings import get_settings
 
 settings = get_settings()
@@ -30,6 +41,11 @@ async def lifespan(_: FastAPI):
 
 
 app = FastAPI(title="WB Review Assistant", version="0.2.0", lifespan=lifespan, docs_url=None)
+
+
+class RuntimeOptionsInput(BaseModel):
+    automation_enabled: bool = False
+    sync_interval_seconds: int = 3600
 
 
 def _credentials(request: Request) -> tuple[str, str]:
@@ -164,6 +180,8 @@ def _dashboard() -> dict:
                 """SELECT (SELECT count(*) FROM products) products,
                 (SELECT count(*) FROM interactions) interactions,
                 (SELECT count(*) FROM interactions WHERE status='new') new_items,
+                (SELECT count(*) FROM interactions WHERE kind='review' AND answered=false
+                    AND status <> 'archived') unanswered_reviews,
                 (SELECT count(*) FROM drafts) drafts,
                 (SELECT count(*) FROM drafts WHERE status='needs_human') needs_human,
                 (SELECT count(*) FROM complaints WHERE eligible=true) complaint_candidates,
@@ -183,7 +201,10 @@ def _dashboard() -> dict:
                 ORDER BY COALESCE(i.created_at_source,i.synced_at) DESC LIMIT 200"""
             )
         ]
-    return {"summary": summary, "items": rows}
+        sync_row = conn.execute(
+            "SELECT value_json,updated_at FROM sync_state WHERE key='last_sync'"
+        ).fetchone()
+    return {"summary": summary, "items": rows, "last_sync": dict(sync_row) if sync_row else None}
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -191,7 +212,15 @@ def dashboard(request: Request):
     return templates.TemplateResponse(
         request=request,
         name="dashboard.html",
-        context={**_dashboard(), "auto_publish": settings.auto_publish},
+        context={
+            **_dashboard(),
+            "auto_publish": settings.auto_publish,
+            "runtime_options": get_runtime_options(settings),
+            "wb_connected": bool(settings.wb_api_token),
+            "openrouter_connected": bool(settings.openrouter_api_key),
+            "llm_mode": settings.llm_mode,
+            "openrouter_model": settings.openrouter_model,
+        },
     )
 
 
@@ -203,6 +232,66 @@ def api_summary():
 @app.get("/api/interactions")
 def api_interactions():
     return _dashboard()["items"]
+
+
+@app.post("/api/sync")
+def api_sync(request: Request):
+    try:
+        return {
+            "status": "ok",
+            "counts": sync_all(
+                settings,
+                actor=request.state.actor,
+                request_id=request.state.request_id,
+            ),
+        }
+    except httpx.HTTPStatusError as exc:
+        raise HTTPException(502, f"WB API returned HTTP {exc.response.status_code}") from exc
+    except httpx.RequestError as exc:
+        raise HTTPException(502, "WB API is temporarily unavailable") from exc
+    except RuntimeError as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+
+@app.post("/api/drafts/generate-unanswered-reviews")
+def api_generate_unanswered_reviews(request: Request):
+    try:
+        return {
+            "status": "ok",
+            **generate_unanswered_review_drafts(
+                settings,
+                actor=request.state.actor,
+                request_id=request.state.request_id,
+            ),
+        }
+    except RuntimeError as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+
+@app.get("/api/settings")
+def api_settings():
+    return {
+        **get_runtime_options(settings),
+        "wb_connected": bool(settings.wb_api_token),
+        "openrouter_connected": bool(settings.openrouter_api_key),
+        "llm_mode": settings.llm_mode,
+        "openrouter_model": settings.openrouter_model,
+        "live_publish_enabled": settings.auto_publish,
+    }
+
+
+@app.post("/api/settings")
+def api_update_settings(request: Request, payload: RuntimeOptionsInput):
+    try:
+        return update_runtime_options(
+            settings,
+            automation_enabled=payload.automation_enabled,
+            sync_interval_seconds=payload.sync_interval_seconds,
+            actor=request.state.actor,
+            request_id=request.state.request_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
 
 
 @app.get("/api/audit")
@@ -240,6 +329,12 @@ def api_generate(request: Request, interaction_id: str):
         }
     except KeyError as exc:
         raise HTTPException(404, "Interaction not found") from exc
+    except httpx.HTTPStatusError as exc:
+        raise HTTPException(502, f"OpenRouter returned HTTP {exc.response.status_code}") from exc
+    except httpx.RequestError as exc:
+        raise HTTPException(502, "OpenRouter is temporarily unavailable") from exc
+    except RuntimeError as exc:
+        raise HTTPException(502, str(exc)) from exc
 
 
 @app.post("/api/interactions/{interaction_id}/complaint")

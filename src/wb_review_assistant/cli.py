@@ -9,7 +9,7 @@ import uuid
 from psycopg.types.json import Jsonb
 
 from .db import audit, init_db, now, transaction
-from .service import sync_all
+from .service import generate_unanswered_review_drafts, get_runtime_options, sync_all
 from .settings import get_settings
 
 logger = logging.getLogger(__name__)
@@ -68,9 +68,16 @@ def main() -> None:
         while True:
             try:
                 logger.info("sync result: %s", sync_all(settings))
+                runtime = get_runtime_options(settings)
+                if runtime["automation_enabled"]:
+                    logger.info(
+                        "draft generation result: %s",
+                        generate_unanswered_review_drafts(settings, actor="worker"),
+                    )
             except Exception:
                 logger.exception("sync failed")
-            time.sleep(settings.sync_interval_seconds)
+            runtime = get_runtime_options(settings)
+            time.sleep(runtime["sync_interval_seconds"])
 
 
 if __name__ == "__main__":

@@ -28,7 +28,7 @@ services:
       postgres:
         condition: service_healthy
     ports:
-      - "${APP_PORT:-8000}:8000"
+      - "${APP_BIND_HOST:-127.0.0.1}:${APP_PORT:-8010}:8000"
     volumes:
       - wb_review_data:/app/data
     read_only: true
@@ -42,6 +42,8 @@ services:
   worker:
     build: .
     restart: unless-stopped
+    healthcheck:
+      disable: true
     env_file:
       - path: .env
         required: false

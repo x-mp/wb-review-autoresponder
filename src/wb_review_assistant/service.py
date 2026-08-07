@@ -3,9 +3,10 @@ from __future__ import annotations
 import uuid
 from typing import Any
 
+import httpx
 from psycopg.types.json import Jsonb
 
-from .db import audit, now, transaction
+from .db import audit, connect, now, transaction
 from .llm import generate
 from .policy import assess_complaint, validate_answer
 from .settings import Settings
@@ -16,13 +17,82 @@ def _items(envelope: dict, kind: str) -> list[dict]:
     return (envelope.get("data") or {}).get(kind) or []
 
 
-def sync_all(settings: Settings) -> dict[str, int]:
+SYNC_LOCK_ID = 8_214_907_001
+DRAFT_LOCK_ID = 8_214_907_002
+DEFAULT_RUNTIME_OPTIONS = {
+    "automation_enabled": False,
+    "sync_interval_seconds": 3600,
+    "require_approval": True,
+}
+
+
+def get_runtime_options(settings: Settings) -> dict[str, Any]:
+    with connect(settings) as conn:
+        row = conn.execute(
+            "SELECT value_json FROM sync_state WHERE key='runtime_options'"
+        ).fetchone()
+    stored = dict(row["value_json"]) if row else {}
+    return {**DEFAULT_RUNTIME_OPTIONS, **stored, "require_approval": True}
+
+
+def update_runtime_options(
+    settings: Settings,
+    *,
+    automation_enabled: bool,
+    sync_interval_seconds: int,
+    actor: str,
+    request_id: str | None,
+) -> dict[str, Any]:
+    if not 300 <= sync_interval_seconds <= 86_400:
+        raise ValueError("Интервал должен быть от 300 до 86400 секунд")
+    options = {
+        "automation_enabled": automation_enabled,
+        "sync_interval_seconds": sync_interval_seconds,
+        "require_approval": True,
+    }
+    with transaction(settings) as conn:
+        conn.execute(
+            """INSERT INTO sync_state(key,value_json,updated_at)
+            VALUES('runtime_options',%s,%s)
+            ON CONFLICT(key) DO UPDATE SET value_json=excluded.value_json,
+            updated_at=excluded.updated_at""",
+            (Jsonb(options), now()),
+        )
+        audit(
+            conn,
+            "runtime_options_updated",
+            "settings",
+            "runtime_options",
+            options,
+            actor=actor,
+            request_id=request_id,
+        )
+    return options
+
+
+def sync_all(
+    settings: Settings, *, actor: str = "system", request_id: str | None = None
+) -> dict[str, int]:
+    with connect(settings) as lock_conn:
+        acquired = lock_conn.execute(
+            "SELECT pg_try_advisory_lock(%s) acquired", (SYNC_LOCK_ID,)
+        ).fetchone()["acquired"]
+        if not acquired:
+            raise RuntimeError("WB synchronization is already running")
+        try:
+            return _sync_all(settings, actor=actor, request_id=request_id)
+        finally:
+            lock_conn.execute("SELECT pg_advisory_unlock(%s)", (SYNC_LOCK_ID,))
+
+
+def _sync_all(settings: Settings, *, actor: str, request_id: str | None) -> dict[str, int]:
     client = WBClient(settings)
     counts = {"products": 0, "reviews": 0, "questions": 0, "archive": 0}
     try:
         for page in client.product_pages():
+            cards = page.data.get("cards") or []
             with transaction(settings) as conn:
-                for card in page.data.get("cards") or []:
+                for card in cards:
                     facts = {
                         item.get("name"): item.get("value")
                         for item in card.get("characteristics") or []
@@ -45,6 +115,15 @@ def sync_all(settings: Settings) -> dict[str, int]:
                         ),
                     )
                     counts["products"] += 1
+                audit(
+                    conn,
+                    "sync_page",
+                    "product",
+                    page.run_id,
+                    {"count": len(cards)},
+                    actor=actor,
+                    request_id=request_id,
+                )
         for endpoint, db_kind, key in (
             ("feedbacks", "review", "reviews"),
             ("questions", "question", "questions"),
@@ -52,19 +131,53 @@ def sync_all(settings: Settings) -> dict[str, int]:
             for answered in (False, True):
                 for page in client.interaction_pages(endpoint, answered):
                     counts[key] += _save_interactions(
-                        settings, _items(page.data, endpoint), db_kind, page.run_id
+                        settings,
+                        _items(page.data, endpoint),
+                        db_kind,
+                        page.run_id,
+                        actor=actor,
+                        request_id=request_id,
                     )
         for page in client.archived_feedback_pages():
             counts["archive"] += _save_interactions(
-                settings, _items(page.data, "feedbacks"), "review", page.run_id, "archived"
+                settings,
+                _items(page.data, "feedbacks"),
+                "review",
+                page.run_id,
+                "archived",
+                actor=actor,
+                request_id=request_id,
             )
     finally:
         client.close()
+    with transaction(settings) as conn:
+        conn.execute(
+            """INSERT INTO sync_state(key,value_json,updated_at) VALUES('last_sync',%s,%s)
+            ON CONFLICT(key) DO UPDATE SET value_json=excluded.value_json,
+            updated_at=excluded.updated_at""",
+            (Jsonb({"status": "ok", "counts": counts}), now()),
+        )
+        audit(
+            conn,
+            "sync_completed",
+            "sync",
+            "wb",
+            counts,
+            actor=actor,
+            request_id=request_id,
+        )
     return counts
 
 
 def _save_interactions(
-    settings: Settings, items: list[dict], kind: str, run_id: str, status: str = "new"
+    settings: Settings,
+    items: list[dict],
+    kind: str,
+    run_id: str,
+    status: str = "new",
+    *,
+    actor: str = "system",
+    request_id: str | None = None,
 ) -> int:
     with transaction(settings) as conn:
         for item in items:
@@ -88,6 +201,9 @@ def _save_interactions(
             text = item.get("text") or item.get("question") or ""
             answer = item.get("answer")
             answer_text = answer.get("text") if isinstance(answer, dict) else answer
+            effective_status = status if status == "archived" else (
+                "answered" if answer_text else "new"
+            )
             conn.execute(
                 """INSERT INTO interactions(id,kind,nm_id,text,rating,answered,answer_text,author_name,
                    created_at_source,source_run_id,status,payload_json,synced_at) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
@@ -105,13 +221,67 @@ def _save_interactions(
                     item.get("userName"),
                     item.get("createdDate") or item.get("createdAt"),
                     run_id,
-                    status,
+                    effective_status,
                     Jsonb(item),
                     now(),
                 ),
             )
-        audit(conn, "sync_page", kind, run_id, {"count": len(items)})
+        audit(
+            conn,
+            "sync_page",
+            kind,
+            run_id,
+            {"count": len(items)},
+            actor=actor,
+            request_id=request_id,
+        )
     return len(items)
+
+
+def generate_unanswered_review_drafts(
+    settings: Settings, *, actor: str = "operator", request_id: str | None = None
+) -> dict[str, int]:
+    with connect(settings) as lock_conn:
+        acquired = lock_conn.execute(
+            "SELECT pg_try_advisory_lock(%s) acquired", (DRAFT_LOCK_ID,)
+        ).fetchone()["acquired"]
+        if not acquired:
+            raise RuntimeError("Bulk draft generation is already running")
+        try:
+            rows = lock_conn.execute(
+                """SELECT i.id FROM interactions i
+                WHERE i.kind='review' AND i.answered=false AND i.status <> 'archived'
+                AND NOT EXISTS (
+                    SELECT 1 FROM drafts d WHERE d.interaction_id=i.id
+                )
+                ORDER BY COALESCE(i.created_at_source,i.synced_at) DESC"""
+            ).fetchall()
+            created = 0
+            failed = 0
+            for row in rows:
+                try:
+                    generate_draft(
+                        settings,
+                        row["id"],
+                        actor=actor,
+                        request_id=request_id,
+                    )
+                    created += 1
+                except (httpx.HTTPError, KeyError, RuntimeError, ValueError):
+                    failed += 1
+            with transaction(settings) as conn:
+                audit(
+                    conn,
+                    "bulk_drafts_completed",
+                    "review",
+                    "unanswered",
+                    {"selected": len(rows), "created": created, "failed": failed},
+                    actor=actor,
+                    request_id=request_id,
+                )
+            return {"selected": len(rows), "created": created, "failed": failed}
+        finally:
+            lock_conn.execute("SELECT pg_advisory_unlock(%s)", (DRAFT_LOCK_ID,))
 
 
 def generate_draft(

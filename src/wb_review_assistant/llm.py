@@ -38,7 +38,21 @@ def generate(
         }, "mock/rules-v1"
     if not settings.openrouter_api_key:
         raise RuntimeError("OPENROUTER_API_KEY is required when LLM_MODE=openrouter")
-    facts = product or {}
+    interaction_context = {
+        "kind": interaction["kind"],
+        "rating": interaction.get("rating"),
+        "text": redact(interaction["text"]),
+    }
+    product_context = (
+        {
+            "name": product.get("name"),
+            "brand": product.get("brand"),
+            "description": product.get("description"),
+            "facts": product.get("facts") or {},
+        }
+        if product
+        else {}
+    )
     schema = {
         "type": "object",
         "additionalProperties": False,
@@ -64,8 +78,8 @@ def generate(
                 "content": json.dumps(
                     {
                         "policy_goal": goal,
-                        "interaction": {**interaction, "text": redact(interaction["text"])},
-                        "product": facts,
+                        "interaction": interaction_context,
+                        "product": product_context,
                     },
                     ensure_ascii=False,
                 ),
@@ -87,7 +101,9 @@ def generate(
         "https://openrouter.ai/api/v1/chat/completions", headers=headers, json=payload, timeout=60
     )
     response.raise_for_status()
-    envelope = response.json()
-    return json.loads(envelope["choices"][0]["message"]["content"]), envelope.get(
-        "model", settings.openrouter_model
-    )
+    try:
+        envelope = response.json()
+        candidate = json.loads(envelope["choices"][0]["message"]["content"])
+    except (KeyError, IndexError, TypeError, json.JSONDecodeError) as exc:
+        raise RuntimeError("OpenRouter returned an invalid structured response") from exc
+    return candidate, envelope.get("model", settings.openrouter_model)
