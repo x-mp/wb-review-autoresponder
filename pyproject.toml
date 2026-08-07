@@ -1,0 +1,30 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "wb-review-autoresponder"
+version = "0.1.0"
+description = "Safe Wildberries reviews and questions assistant"
+requires-python = ">=3.12"
+dependencies = [
+  "fastapi>=0.116,<1", "uvicorn[standard]>=0.35,<1", "httpx>=0.28,<1",
+  "pydantic-settings>=2.10,<3", "jinja2>=3.1,<4", "python-multipart>=0.0.20,<1",
+  "psycopg[binary]>=3.2,<4"
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.4,<9", "ruff>=0.12,<1"]
+
+[project.scripts]
+wb-reviews = "wb_review_assistant.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/wb_review_assistant"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100

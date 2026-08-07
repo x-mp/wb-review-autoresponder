@@ -1,0 +1,69 @@
+{
+  "schema_version": 1,
+  "updated_at": "2026-08-07",
+  "methods": [
+    {
+      "id": "wb.questions.list", "source": "seller_api", "entity": "questions", "description": "List seller questions with filters and pagination",
+      "http_method": "GET", "base_url": "https://feedbacks-api.wildberries.ru", "path": "/api/v1/questions",
+      "required_params": ["isAnswered", "take", "skip"], "auth_env": "WB_API_TOKEN",
+      "rate_limit": "Shared category limit: 3 requests/s per seller account; 333 ms interval; burst 6",
+      "docs": "https://dev.wildberries.ru/ru/openapi/user-communication"
+    },
+    {
+      "id": "wb.question.get", "source": "seller_api", "entity": "question", "description": "Get one seller question by WB ID",
+      "http_method": "GET", "base_url": "https://feedbacks-api.wildberries.ru", "path": "/api/v1/question",
+      "required_params": ["id"], "auth_env": "WB_API_TOKEN",
+      "rate_limit": "Shared category limit: 3 requests/s per seller account; 333 ms interval; burst 6",
+      "docs": "https://dev.wildberries.ru/ru/openapi/user-communication"
+    },
+    {
+      "id": "wb.feedbacks.list", "source": "seller_api", "entity": "feedbacks", "description": "List active seller feedbacks with filters and pagination",
+      "http_method": "GET", "base_url": "https://feedbacks-api.wildberries.ru", "path": "/api/v1/feedbacks",
+      "required_params": ["isAnswered", "take", "skip"], "auth_env": "WB_API_TOKEN",
+      "rate_limit": "Shared category limit: 3 requests/s per seller account; 333 ms interval; burst 6",
+      "docs": "https://dev.wildberries.ru/ru/openapi/user-communication"
+    },
+    {
+      "id": "wb.feedbacks.archive", "source": "seller_api", "entity": "feedbacks_archive", "description": "List archived seller feedbacks",
+      "http_method": "GET", "base_url": "https://feedbacks-api.wildberries.ru", "path": "/api/v1/feedbacks/archive",
+      "required_params": ["take", "skip"], "auth_env": "WB_API_TOKEN",
+      "rate_limit": "Shared category limit: 3 requests/s per seller account; 333 ms interval; burst 6",
+      "docs": "https://dev.wildberries.ru/ru/openapi/user-communication"
+    },
+    {
+      "id": "wb.feedback.get", "source": "seller_api", "entity": "feedback", "description": "Get one seller feedback by WB ID",
+      "http_method": "GET", "base_url": "https://feedbacks-api.wildberries.ru", "path": "/api/v1/feedback",
+      "required_params": ["id"], "auth_env": "WB_API_TOKEN",
+      "rate_limit": "Shared category limit: 3 requests/s per seller account; 333 ms interval; burst 6",
+      "docs": "https://dev.wildberries.ru/ru/openapi/user-communication"
+    },
+    {
+      "id": "wb.question.answer", "source": "seller_api", "entity": "question_answer", "description": "Answer a WB question after explicit approval",
+      "http_method": "PATCH", "base_url": "https://feedbacks-api.wildberries.ru", "path": "/api/v1/questions",
+      "required_params": ["id", "answer.text", "state"], "auth_env": "WB_API_TOKEN", "write": true,
+      "rate_limit": "Shared category limit: 3 requests/s per seller account; 333 ms interval; burst 6",
+      "docs": "https://dev.wildberries.ru/ru/openapi/user-communication"
+    },
+    {
+      "id": "wb.feedback.answer.create", "source": "seller_api", "entity": "feedback_answer", "description": "Create the first answer to a WB feedback after explicit approval",
+      "http_method": "POST", "base_url": "https://feedbacks-api.wildberries.ru", "path": "/api/v1/feedbacks/answer",
+      "required_params": ["id", "text"], "auth_env": "WB_API_TOKEN", "write": true,
+      "rate_limit": "Shared category limit: 3 requests/s per seller account; 333 ms interval; burst 6",
+      "docs": "https://dev.wildberries.ru/ru/openapi/user-communication"
+    },
+    {
+      "id": "wb.feedback.answer.update", "source": "seller_api", "entity": "feedback_answer", "description": "Update an existing WB feedback answer after explicit approval",
+      "http_method": "PATCH", "base_url": "https://feedbacks-api.wildberries.ru", "path": "/api/v1/feedbacks/answer",
+      "required_params": ["id", "text"], "auth_env": "WB_API_TOKEN", "write": true,
+      "rate_limit": "Shared category limit: 3 requests/s per seller account; 333 ms interval; burst 6",
+      "docs": "https://dev.wildberries.ru/ru/openapi/user-communication"
+    },
+    {
+      "id": "wb.products.list", "source": "seller_api", "entity": "products", "description": "List all seller product cards with cursor pagination",
+      "http_method": "POST", "read_only": true, "base_url": "https://content-api.wildberries.ru", "path": "/content/v2/get/cards/list",
+      "required_params": ["settings.cursor.limit"], "auth_env": "WB_API_TOKEN",
+      "rate_limit": "100 requests/minute; 600 ms interval; burst 5",
+      "docs": "https://dev.wildberries.ru/ru/openapi/work-with-products"
+    }
+  ]
+}

@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>WB Review Assistant</title><style>
+:root{font-family:Inter,system-ui,sans-serif;color:#20202a;background:#f6f6fb}body{margin:0}.wrap{max-width:1200px;margin:auto;padding:28px}h1{margin:0 0 6px}.muted{color:#6b6b78}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin:24px 0}.card{background:white;border:1px solid #e7e6ef;border-radius:14px;padding:16px;box-shadow:0 3px 16px #25204d0a}.num{font-size:28px;font-weight:750}.item{display:grid;grid-template-columns:70px 90px minmax(180px,1fr) 120px 270px;gap:12px;align-items:center;margin-bottom:10px}.review{color:#8048d8}.question{color:#087d80}button{border:0;border-radius:8px;padding:8px 11px;background:#5c38cc;color:white;cursor:pointer}button.secondary{background:#ece9fa;color:#4025a0}.badge{border-radius:20px;background:#eee;padding:5px 9px;font-size:12px}@media(max-width:800px){.item{grid-template-columns:1fr}.wrap{padding:14px}}
+</style></head><body><div class="wrap"><h1>WB Review Assistant</h1>
+<div class="muted">Сбор, черновики, контроль рисков и аудит. Live-публикация: {{ "включена" if auto_publish else "выключена" }}.</div>
+<section class="grid">
+{% for key,label in [('products','Товаров'),('interactions','Обращений'),('new_items','Новых'),('drafts','Черновиков'),('needs_human','На проверке'),('complaint_candidates','Оснований жалобы'),('audit_events','Изменений'),('access_events','Доступов')] %}<div class="card"><div class="num">{{ summary[key] }}</div><div class="muted">{{ label }}</div></div>{% endfor %}
+</section><section>{% for item in items %}<article class="card item">
+<strong class="{{ item.kind }}">{{ 'Отзыв' if item.kind=='review' else 'Вопрос' }}</strong><span>{{ item.rating or '—' }} ★</span>
+<div><b>{{ item.product_name or ('Товар '+(item.nm_id|string)) }}</b><br>{{ item.text }}
+{% if item.draft_text %}<hr><span class="muted">Черновик · {{ item.goal }} · {{ '%.0f'|format(item.confidence*100) }}%</span><br>{{ item.draft_text }}{% endif %}</div>
+<span class="badge">{{ item.draft_status or item.status }}</span><div>
+<button onclick="act('/api/interactions/{{ item.id }}/generate')">Черновик</button>
+{% if item.kind=='review' %}<button class="secondary" onclick="act('/api/interactions/{{ item.id }}/complaint')">Проверить жалобу</button>{% endif %}
+{% if item.draft_id and item.draft_status in ['validated','needs_human'] %}<button onclick="act('/api/drafts/{{ item.draft_id }}/approve')">Одобрить</button>{% endif %}
+</div></article>{% else %}<div class="card">Данных пока нет. Запустите <code>wb-reviews sync</code> или <code>wb-reviews seed-demo</code>.</div>{% endfor %}</section>
+</div><script>async function act(url){const r=await fetch(url,{method:'POST',headers:{'X-Requested-With':'wb-review-assistant'}});const body=await r.json();if(!r.ok)alert(body.detail||'Ошибка');else{alert(JSON.stringify(body,null,2));location.reload()}}</script></body></html>
