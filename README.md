@@ -41,6 +41,7 @@ ruff check .
 Документация:
 
 - [практический playbook ответов на отзывы и вопросы](docs/RESPONSE_PLAYBOOK.md);
+- [правила отзывов покупателей, жалобы, доставка и ПВЗ](docs/BUYER_REVIEW_RULES.md);
 - [архитектура и спецификация](docs/SPEC.md);
 - [актуальные правила WB и жалобы](docs/WB_RULES.md).
 
