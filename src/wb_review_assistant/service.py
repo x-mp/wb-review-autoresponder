@@ -201,8 +201,8 @@ def _save_interactions(
             text = item.get("text") or item.get("question") or ""
             answer = item.get("answer")
             answer_text = answer.get("text") if isinstance(answer, dict) else answer
-            effective_status = status if status == "archived" else (
-                "answered" if answer_text else "new"
+            effective_status = (
+                status if status == "archived" else ("answered" if answer_text else "new")
             )
             conn.execute(
                 """INSERT INTO interactions(id,kind,nm_id,text,rating,answered,answer_text,author_name,
